@@ -1,7 +1,7 @@
 import streamlit as st
 from groq import Groq
 
-groq_api_key = "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"
+groq_api_key = st.secrets.get("GROQ_API_KEY")
 
 st.title("💬 Groq Chatbot")
 
