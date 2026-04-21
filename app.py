@@ -3,15 +3,6 @@ from groq import Groq
 
 groq_api_key = "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"
 
-# with st.sidebar:
-# Cambiato il nome per chiarezza
-# groq_api_key = "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"
-
-# groq_api_key = st.text_input(
-#    "Groq API Key", key="chatbot_api_key", type="password")
-# [Ottieni una Groq API key](https://console.groq.com/keys)"
-# [Documentazione Groq](https://console.groq.com/docs/models)"
-
 st.title("💬 Groq Chatbot")
 
 # Inizializzazione della cronologia dei messaggi
