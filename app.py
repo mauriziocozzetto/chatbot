@@ -1,70 +1,72 @@
 import streamlit as st
 from groq import Groq
 
-# --- COSTANTI ---
-MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-]
+# --- COSTANTI E CONOSCENZA ---
+MODELS_INFO = {
+    "llama-3.3-70b-versatile": "Il modello più equilibrato e potente, ideale per ragionamenti complessi e conversazioni lunghe.",
+    "llama-3.1-8b-instant": "Estremamente veloce e leggero. Perfetto per compiti semplici o risposte immediate.",
+    "openai/gpt-oss-120b": "Modello ad alta capacità (se disponibile), ottimizzato per scrittura creativa e analisi approfondite.",
+    "openai/gpt-oss-20b": "Versione più rapida della linea GPT-OSS, bilancia bene prestazioni e velocità."
+}
+MODELS = list(MODELS_INFO.keys())
 
 # --- CONFIGURAZIONE E SETUP ---
 def init_page():
-    """Configura l'aspetto della pagina e la sidebar."""
-    st.set_page_config(page_title="Groq Professional Chat", page_icon="⚡")
-    st.title("⚡ Groq Multi-Model Chat")
+    st.set_page_config(page_title="Groq Multi-Model", page_icon="⚡")
+    st.title("⚡ Groq Expert Chat")
     
     with st.sidebar:
-        st.header("Impostazioni Chat")
-        # Il modello selezionato viene salvato in una variabile
-        selected_model = st.selectbox(
-            "Seleziona il modello AI:",
-            options=MODELS,
-            index=0  # Default sul primo della lista
-        )
+        st.header("Configurazione")
+        selected_model = st.selectbox("Seleziona il modello AI:", options=MODELS)
+        
+        # Spiegazione automatica del modello selezionato
+        st.info(f"**Opportunità:** {MODELS_INFO[selected_model]}")
         
         st.divider()
         if st.button("Pulisci Cronologia"):
-            st.session_state.messages = [
-                {"role": "assistant", "content": "Cronologia resettata. Come posso aiutarti?"}
-            ]
+            st.session_state.messages = []
             st.rerun()
             
     return selected_model
 
-def get_client():
-    """Inizializza il client Groq."""
-    api_key = st.secrets.get("GROQ_API_KEY")
-    if not api_key:
-        st.error("Configura 'GROQ_API_KEY' nei Secrets!")
-        st.stop()
-    return Groq(api_key=api_key)
+def get_system_prompt():
+    """Genera il messaggio di sistema con la conoscenza dei modelli."""
+    info_text = "\n".join([f"- {m}: {desc}" for m, desc in MODELS_INFO.items()])
+    return {
+        "role": "system", 
+        "content": f"Sei un assistente esperto. Conosci i seguenti modelli disponibili in questa app:\n{info_text}\n"
+                   "Se l'utente te lo chiede, spiega i vantaggi del modello che sta usando."
+    }
 
 # --- GESTIONE MESSAGGI ---
 def init_session_state():
+    """Inizializza lo stato includendo il messaggio di sistema."""
     if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Ciao! Scegli un modello dalla barra a sinistra e iniziamo."}
-        ]
+        st.session_state.messages = []
+        # Aggiungiamo il ruolo system (non visibile nella UI standard)
+        st.session_state.messages.append(get_system_prompt())
+        # Messaggio di benvenuto visibile
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "Ciao! Ho caricato la conoscenza dei miei modelli. Chiedimi pure quali sono le differenze!"}
+        )
 
 def display_chat():
-    """Visualizza tutti i messaggi nello stato della sessione."""
+    """Visualizza solo i messaggi user e assistant (nasconde il system)."""
     for msg in st.session_state.messages:
-        st.chat_message(msg["role"]).write(msg["content"])
+        if msg["role"] != "system":
+            st.chat_message(msg["role"]).write(msg["content"])
 
 # --- LOGICA DI RISPOSTA ---
 def handle_assistant_response(client, model_name):
-    """Gestisce la chiamata API e lo streaming."""
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_response = ""
         
         try:
+            # Inviamo tutta la cronologia (incluso il system prompt in posizione 0)
             stream = client.chat.completions.create(
                 model=model_name,
-                messages=[{"role": m["role"], "content": m["content"]} 
-                          for m in st.session_state.messages],
+                messages=st.session_state.messages,
                 stream=True,
             )
             
@@ -77,25 +79,19 @@ def handle_assistant_response(client, model_name):
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             
         except Exception as e:
-            st.error(f"Errore durante la generazione ({model_name}): {e}")
+            st.error(f"Errore API: {e}")
 
 # --- MAIN LOOP ---
 def main():
-    # 1. Inizializzazione UI e recupero modello scelto
     selected_model = init_page()
     init_session_state()
-    
-    # 2. Visualizzazione storico
     display_chat()
     
-    # 3. Input utente e risposta
-    if prompt := st.chat_input("Scrivi qui..."):
-        # Aggiunta messaggio utente
+    if prompt := st.chat_input("Chiedimi delle differenze tra i modelli..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
         
-        # Generazione risposta col modello scelto nella sidebar
-        client = get_client()
+        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
         handle_assistant_response(client, selected_model)
 
 if __name__ == "__main__":
