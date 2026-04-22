@@ -1,129 +1,83 @@
 import streamlit as st
-from groq import Groq
+from groq_client import GroqChatClient
+from chat_manager import ChatHistoryManager
+import time
 
-# --- COSTANTI E CONOSCENZA ---
-MODELS_INFO = {
-    "llama-3.3-70b-versatile": "Il modello più equilibrato e potente, ideale per ragionamenti complessi e conversazioni lunghe.",
-    "llama-3.1-8b-instant": "Estremamente veloce e leggero. Perfetto per compiti semplici o risposte immediate.",
-    "openai/gpt-oss-120b": "Modello ad alta capacità (se disponibile), ottimizzato per scrittura creativa e analisi approfondite.",
-    "openai/gpt-oss-20b": "Versione più rapida della linea GPT-OSS, bilancia bene prestazioni e velocità."
-}
-MODELS = list(MODELS_INFO.keys())
+st.set_page_config(page_title="Groq AI Chat", layout="wide", page_icon="🤖")
 
+def main():
+    client = GroqChatClient()
+    chat = ChatHistoryManager()
 
-# --- CONFIGURAZIONE E SETUP ---
-def init_page():
-    st.set_page_config(page_title="Groq Multi-Model", page_icon="⚡")
-    st.title("⚡ Groq Expert Chat")
+    if not client.is_configured():
+        st.error("Errore: GROQ_API_KEY non trovata in .streamlit/secrets.toml")
+        st.stop()
 
+    # --- SIDEBAR CONFIGURAZIONE ---
     with st.sidebar:
         st.header("Configurazione")
-        selected_model = st.selectbox(
-            "Seleziona il modello AI:",
-            options=MODELS,
-            key="selected_model"
-        )
-        st.info(f"**Info modello:** {MODELS_INFO[selected_model]}")
+        model_id = st.selectbox("Modello AI:", client.get_available_models(), key="model_selector")
+        
+        if st.button("Mostra Info Modello"):
+            st.info(client.get_model_capabilities(model_id))
+        
         st.divider()
-
+        temp = st.slider("Temperatura (Creatività):", 0.0, 2.0, 0.2, step=0.1)
+        max_user_msg = st.slider("Limite Messaggi Utente:", 5, 50, 20)
+        
+        st.divider()
         if st.button("Pulisci Cronologia"):
-            # FIX #2: reset completo che ripristina anche system prompt e benvenuto
-            reset_session()
+            chat.clear_history()
             st.rerun()
 
-    return selected_model
+    # Sincronizziamo l'identità del modello selezionato prima di ogni interazione
+    chat.sync_system_prompt(model_id)
 
-
-# --- GESTIONE STATO ---
-def get_system_prompt(model_name: str) -> dict:
-    """Genera il system prompt dinamico con il modello attualmente attivo."""
-    info_text = "\n".join([f"- {m}: {desc}" for m, desc in MODELS_INFO.items()])
-    return {
-        "role": "system",
-        "content": (
-            f"Sei un assistente esperto. Il modello attualmente in uso è: **{model_name}**.\n"
-            f"Conosci i seguenti modelli disponibili in questa app:\n{info_text}\n"
-            "Se l'utente te lo chiede, spiega i vantaggi del modello che sta usando rispetto agli altri."
-        )
-    }
-
-
-def reset_session(model_name: str = MODELS[0]):
-    """Inizializza o resetta la sessione in modo pulito."""
-    st.session_state.messages = [
-        get_system_prompt(model_name),
-        {"role": "assistant", "content": "Ciao! Sono pronto. Chiedimi pure le differenze tra i modelli disponibili!"}
-    ]
-    st.session_state.last_model = model_name
-
-
-def init_session_state(model_name: str):
-    """Inizializza la sessione e aggiorna il system prompt se il modello cambia."""
-    if "messages" not in st.session_state:
-        reset_session(model_name)
-        return
-
-    # FIX #1: aggiorna il system prompt se l'utente ha cambiato modello
-    if st.session_state.get("last_model") != model_name:
-        st.session_state.messages[0] = get_system_prompt(model_name)
-        st.session_state.last_model = model_name
-        st.session_state.messages.append({
-            "role": "assistant",
-            # FIX #4: notifica visiva del cambio modello
-            "content": f"🔄 Modello cambiato in **{model_name}**. {MODELS_INFO[model_name]}"
-        })
-
-
-# --- UI CHAT ---
-def display_chat():
-    """Visualizza solo i messaggi user e assistant (nasconde il system)."""
-    for msg in st.session_state.messages:
+    # --- VISUALIZZAZIONE CHAT ---
+    for msg in chat.get_messages():
         if msg["role"] != "system":
-            st.chat_message(msg["role"]).write(msg["content"])
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-
-# --- LOGICA DI RISPOSTA ---
-def handle_assistant_response(client: Groq, model_name: str):
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_response = ""
-
-        try:
-            stream = client.chat.completions.create(
-                model=model_name,
-                messages=st.session_state.messages,
-                stream=True,
-            )
-
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    full_response += delta
-                    placeholder.markdown(full_response + "▌")
-
-            placeholder.markdown(full_response)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-        except Exception as e:
-            st.error(f"Errore API: {e}")
-
-
-# --- MAIN ---
-def main():
-    selected_model = init_page()
-
-    # FIX #3: client inizializzato una sola volta per sessione
-    if "client" not in st.session_state:
-        st.session_state.client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-    init_session_state(selected_model)
-    display_chat()
-
+    # --- INFO BAR (CONTATORE + MODELLO) ---
+    # Posizionata appena sopra l'input per massima visibilità
+    current_user_count = chat.count_user_messages()
+    
+    # Creiamo una riga formattata con emoji per distinguere le info
+    st.markdown(
+        f"**Modello attivo:** `{model_id}` |  **Messaggi inviati:** `{current_user_count} / {max_user_msg}`"
+    )
+    
+    # --- GESTIONE INPUT ---
     if prompt := st.chat_input("Chiedimi delle differenze tra i modelli..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.chat_message("user").write(prompt)
-        handle_assistant_response(st.session_state.client, selected_model)
+        
+        # 1. Aggiunta messaggio utente
+        chat.add_message("user", prompt)
+        st.chat_message("user").markdown(prompt)
 
+        # 2. Risposta in streaming
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            full_response = ""
+            stream = client.stream_chat_response(chat.get_messages(), model_id, temp)
+            
+            if stream:
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                        placeholder.markdown(full_response + "▌")
+                
+                placeholder.markdown(full_response)
+                chat.add_message("assistant", full_response)
+
+        # 3. Controllo reset e aggiornamento interfaccia
+        if chat.check_and_reset_if_limit_reached(max_user_msg):
+            st.warning(f"⚠️ Limite di {max_user_msg} messaggi raggiunto. Reset della conversazione in corso...")
+            time.sleep(2)
+            st.rerun()
+        else:
+            # Forza il refresh per aggiornare il contatore numerico in tempo reale
+            st.rerun()
 
 if __name__ == "__main__":
-    main()
+    main()  
